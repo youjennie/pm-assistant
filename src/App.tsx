@@ -2014,6 +2014,185 @@ RULES:
   );
 }
 
+// ── Jira Ticket Editor (editable fields + Send to Jira) ───────────────────────
+
+const JIRA_PROJECTS = [
+  { key: 'AMW', name: 'Amasian Web' },
+  { key: 'AMS', name: 'Amasian TV' },
+  { key: 'AMA', name: 'Amasian-Android' },
+  { key: 'AMI', name: 'Amasian-iOS' },
+  { key: 'AMR', name: 'Amasian Roku' },
+  { key: 'AMT', name: 'Amasian-tvOS' },
+  { key: 'AMY', name: 'Amasian YD' },
+  { key: 'BILL', name: 'Billing' },
+  { key: 'BE', name: 'Back-End Team' },
+  { key: 'CMS', name: 'CMS Team' },
+  { key: 'BUG', name: 'ODK Market Issue' },
+  { key: 'ASM', name: 'All Scrum Management' },
+];
+
+const JIRA_ISSUE_TYPES = ['Bug', 'Task', 'Feature', 'Story', 'Epic', 'Improvement', 'Sub-task'];
+const JIRA_PRIORITIES = ['Highest', 'High', 'Medium', 'Low', 'Lowest'];
+
+interface JiraFields {
+  project: string;
+  issueType: string;
+  summary: string;
+  description: string;
+  priority: string;
+  labels: string;
+}
+
+function parseJiraFields(ticketText: string, ticketType: string): JiraFields {
+  // Extract title from the ticket text
+  const titleMatch = ticketText.match(/(?:Title|Summary)[:\s]*(.+)/i);
+  const summary = titleMatch ? titleMatch[1].trim() : ticketText.split('\n')[0].trim();
+
+  // Extract priority
+  const prioMatch = ticketText.match(/P[1-4]/);
+  const prioMap: Record<string, string> = { P1: 'Highest', P2: 'High', P3: 'Medium', P4: 'Low' };
+  const priority = prioMatch ? (prioMap[prioMatch[0]] ?? 'Medium') : 'Medium';
+
+  // Issue type from ticket type
+  const issueType = ticketType === 'bug' ? 'Bug' : 'Task';
+
+  return {
+    project: 'AMW',
+    issueType,
+    summary,
+    description: ticketText,
+    priority,
+    labels: '',
+  };
+}
+
+function JiraTicketEditor({
+  ticketText, ticketType, onUpdateTicket, onSendToJira,
+}: {
+  ticketText: string;
+  ticketType: string;
+  onUpdateTicket: (text: string) => void;
+  onSendToJira: (fields: JiraFields) => void;
+}) {
+  const [fields, setFields] = useState<JiraFields>(() => parseJiraFields(ticketText, ticketType));
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  // Sync description when ticket text changes externally (e.g. from revision)
+  useEffect(() => {
+    setFields((prev) => ({ ...prev, description: ticketText }));
+  }, [ticketText]);
+
+  const updateField = <K extends keyof JiraFields>(key: K, val: JiraFields[K]) => {
+    setFields((prev) => ({ ...prev, [key]: val }));
+    setSent(false);
+  };
+
+  const handleSend = async () => {
+    setSending(true);
+    // Save to localStorage for MCP pickup
+    const payload = { ...fields, timestamp: new Date().toISOString(), status: 'pending' };
+    localStorage.setItem('drjira-send-to-jira', JSON.stringify(payload));
+    onSendToJira(fields);
+    setSending(false);
+    setSent(true);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Jira fields */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm">Jira Fields</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs mb-1 block">Project *</Label>
+              <Select value={fields.project} onValueChange={(v) => updateField('project', v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {JIRA_PROJECTS.map((p) => (
+                    <SelectItem key={p.key} value={p.key} className="text-xs">{p.key} — {p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">Issue Type *</Label>
+              <Select value={fields.issueType} onValueChange={(v) => updateField('issueType', v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {JIRA_ISSUE_TYPES.map((t) => (
+                    <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs mb-1 block">Priority *</Label>
+              <Select value={fields.priority} onValueChange={(v) => updateField('priority', v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {JIRA_PRIORITIES.map((p) => (
+                    <SelectItem key={p} value={p} className="text-xs">{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">Labels</Label>
+              <Input value={fields.labels} onChange={(e) => updateField('labels', e.target.value)}
+                placeholder="comma-separated" className="h-8 text-xs" />
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs mb-1 block">Summary *</Label>
+            <Input value={fields.summary} onChange={(e) => updateField('summary', e.target.value)}
+              className="h-8 text-xs" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Editable description */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            Description
+            <CopyButton text={fields.description} />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Textarea
+            value={fields.description}
+            onChange={(e) => { updateField('description', e.target.value); onUpdateTicket(e.target.value); }}
+            className="text-sm leading-relaxed font-[inherit] min-h-[300px]"
+          />
+        </CardContent>
+      </Card>
+
+      {/* Send button */}
+      <Button onClick={handleSend} disabled={sending || !fields.summary.trim()}
+        className="w-full h-10 gap-2 font-semibold">
+        {sending
+          ? <><Loader2 className="h-4 w-4 animate-spin" />Sending to Jira...</>
+          : sent
+            ? <><Check className="h-4 w-4" />Ready — ask Claude to send!</>
+            : <><Send className="h-4 w-4" />Send to Jira</>}
+      </Button>
+      {sent && (
+        <p className="text-xs text-center text-muted-foreground fade-in">
+          Ticket data saved. Tell Claude: "send this to Jira" to create the issue.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Follow-up tab with Jira revision ──────────────────────────────────────────
 
 function FollowUpTab({
@@ -2742,14 +2921,16 @@ function TicketGeneratorPage({
             </TabsList>
 
             <TabsContent value="jira" className="mt-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center justify-between">Jira Ticket Draft<CopyButton text={output.jiraTicket} /></CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <pre className="whitespace-pre-wrap text-sm leading-relaxed bg-muted/50 rounded-lg p-4 font-[inherit]">{output.jiraTicket}</pre>
-                </CardContent>
-              </Card>
+              <JiraTicketEditor
+                ticketText={output.jiraTicket}
+                ticketType={autoDetectType ? 'bug' : ticketType}
+                onUpdateTicket={handleReviseTicket}
+                onSendToJira={(fields) => {
+                  localStorage.setItem('drjira-send-to-jira', JSON.stringify({
+                    ...fields, timestamp: new Date().toISOString(), status: 'pending',
+                  }));
+                }}
+              />
             </TabsContent>
 
             <TabsContent value="slack" className="mt-4 space-y-4">
